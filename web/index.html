@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link id="favicon" rel="icon" type="image/png" href="/assets/logo-C_qAmi2R.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Aksi Guru</title>
+    <script>
+      // Dynamically set favicon from madrasah logo
+      (async () => {
+        try {
+          const base = window.location.origin;
+          const res = await fetch(base + '/api/public/logo');
+          const json = await res.json();
+          if (json.data?.url) {
+            document.getElementById('favicon').href = json.data.url;
+          }
+        } catch {}
+      })();
+    </script>
+    <script type="module" crossorigin src="/assets/index-4qp4fXx3.js"></script>
+    <link rel="modulepreload" crossorigin href="/assets/vue.esm-bundler-ComqkgVC.js">
+    <link rel="stylesheet" crossorigin href="/assets/index-C41koPBi.css">
+  </head>
+  <body>
+    <div id="app"></div>
+  </body>
+</html>
