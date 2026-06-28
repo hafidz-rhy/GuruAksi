@@ -14,59 +14,12 @@ Aplikasi pengelolaan administrasi guru modern dengan fitur presensi QR Code dan 
 
 ## 📁 Struktur Monorepo
 
-```
-AksiGuruNew/
-├── api/                    # Backend CodeIgniter 4
-│   ├── app/
-│   │   ├── Controllers/Api/   # REST API Controller
-│   │   ├── Models/            # Database Models
-│   │   ├── Filters/           # Middleware (Auth, Maintenance)
-│   │   └── Database/Migrations/  # Migration files
-│   ├── writable/              # Cache, logs, patches backup
-│   └── VERSION                # Nomor versi aplikasi
-├── web/                    # Frontend Vue 3 + Vite
-│   ├── src/
-│   │   ├── layouts/        # DesktopLayout + MobileLayout
-│   │   ├── views/          # Page components
-│   │   ├── stores/         # Pinia stores
-│   │   ├── router/         # Vue Router
-│   │   └── services/       # Axios API
-│   └── package.json
-├── database/               # Shared DB resources
-├── patches/                # Output folder untuk patch ZIP (dev)
-├── build-patch.js          # Script builder patch (dev)
-├── docs/                   # Documentation
-└── README.md
-```
-
 ## 🚀 Quick Start
-
 ### Prasyarat
 - PHP 8.1+
 - Node.js 18+
 - MariaDB/MySQL
 - Composer
-
-### Backend Setup
-
-```bash
-cd api
-composer install
-cp env .env
-# Edit .env: database config
-php spark migrate
-php spark db:seed DatabaseSeeder
-php spark serve --port 8080
-```
-
-### Frontend Setup
-
-```bash
-cd web
-npm install
-npm run dev
-# Open http://localhost:5173
-```
 
 ## 📱 Fitur Utama
 
