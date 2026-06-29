@@ -48,7 +48,7 @@ Vagrantfile
 #-------------------------
 # Database Migration
 #-------------------------
-app/Database/*
+app/Database/
 
 #-------------------------
 # Temporary Files
