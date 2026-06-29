@@ -46,6 +46,11 @@ $RECYCLE.BIN/
 Vagrantfile
 
 #-------------------------
+# Database Migration
+#-------------------------
+app/Database/*
+
+#-------------------------
 # Temporary Files
 #-------------------------
 /writable/cache/*
@@ -124,3 +129,4 @@ _modules/*
 
 /results/
 /phpunit.xml
+
