@@ -12,7 +12,14 @@ class Users extends BaseController
 
     public function index()
     {
-        $data = (new UsersModel())->findAll();
+        $db = \Config\Database::connect();
+        $data = $db->table('users')
+            ->select('users.*, mst_guru.nm_lengkap as nm_guru')
+            ->join('mst_guru', 'mst_guru.user_id = users.id AND mst_guru.dlt_at IS NULL', 'left')
+            ->orderBy('users.username', 'ASC')
+            ->get()
+            ->getResult();
+        
         return $this->respond(['status' => 'success', 'data' => $data]);
     }
 
@@ -27,7 +34,7 @@ class Users extends BaseController
 
         $data = $this->request->getJSON(true);
         $data['pwd'] = password_hash($data['pwd'], PASSWORD_BCRYPT);
-        $data['status'] = $data['status'] ?? 'aktif';
+        $data['status']  = $data['status'] ?? 'aktif';
 
         $model = new UsersModel();
         if ($model->insert($data)) {
@@ -43,8 +50,13 @@ class Users extends BaseController
         if (! $existing) return $this->failNotFound('User tidak ditemukan');
 
         $data = $this->request->getJSON(true);
-        // Don't allow password change via update (use reset-password)
-        unset($data['pwd']);
+        
+        // Hash password if provided in update
+        if (!empty($data['pwd'])) {
+            $data['pwd'] = password_hash($data['pwd'], PASSWORD_BCRYPT);
+        } else {
+            unset($data['pwd']);
+        }
 
         if ($model->update($id, $data)) {
             return $this->respond(['status' => 'success', 'message' => 'User berhasil diperbarui']);

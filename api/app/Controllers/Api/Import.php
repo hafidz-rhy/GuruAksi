@@ -16,6 +16,8 @@ class Import extends BaseController
     /**
      * POST /api/import/siswa
      * Upload Excel siswa. All-or-nothing: reject all if any duplicate NIS/NISN.
+     * Header wajib: NISN, Nama, Kelas (nama kelas atau ID)
+     * Header opsional: NIS, Kelamin, Alamat, NoTelp, Email, TmpLahir, TglLahir, Agama
      */
     public function siswa()
     {
@@ -48,7 +50,20 @@ class Import extends BaseController
         // Map column indexes
         $map = $this->mapHeadersSiswa($headers);
         if (!$map) {
-            return $this->fail('Header kolom tidak dikenali. Pastikan ada: nis, nisn, nm_lengkap, kelas', 400);
+            return $this->fail('Header kolom tidak dikenali. Pastikan ada: NISN, Nama, Kelas', 400);
+        }
+
+        // Cache kelas lookup: nama_kelas / id → id
+        $dbKelas = Database::connect();
+        $kelasList = $dbKelas->table('mst_kelas')->where('status', 'aktif')->get()->getResult();
+        $kelasMap = []; // normalized name → id
+        $kelasIdSet = []; // set of valid kelas IDs
+        foreach ($kelasList as $k) {
+            $kelasIdSet[$k->id] = true;
+            $normalized = strtolower(str_replace([' ', '-', '_'], '', $k->nm_kelas));
+            $kelasMap[$normalized] = $k->id;
+            // Also map by ID string
+            $kelasMap[(string)$k->id] = $k->id;
         }
 
         // Phase 1: Validate ALL rows first
@@ -59,35 +74,58 @@ class Import extends BaseController
 
         foreach ($dataRows as $idx => $row) {
             $line = $idx + 2; // Excel line number
-            $nis = trim($row[$map['nis']] ?? '');
             $nisn = trim($row[$map['nisn']] ?? '');
+            $nis = trim($row[$map['nis'] ?? -1] ?? '');
             $nama = trim($row[$map['nm_lengkap']] ?? '');
-            $kelas = trim($row[$map['kelas']] ?? '');
+            $kelasRaw = trim($row[$map['kelas']] ?? '');
             $jk = trim($row[$map['kelamin'] ?? -1] ?? '');
             $alamat = trim($row[$map['alamat'] ?? -1] ?? '');
             $no_telp = trim($row[$map['no_telp'] ?? -1] ?? '');
-            $nama_ayah = trim($row[$map['nama_ayah'] ?? -1] ?? '');
-            $nama_ibu = trim($row[$map['nama_ibu'] ?? -1] ?? '');
-            $thn_masuk = trim($row[$map['thn_masuk'] ?? -1] ?? '');
+            $email = trim($row[$map['email'] ?? -1] ?? '');
+            $tmp_lahir = trim($row[$map['tmp_lahir'] ?? -1] ?? '');
+            $tgl_lahir = trim($row[$map['tgl_lahir'] ?? -1] ?? '');
+            $agama = trim($row[$map['agama'] ?? -1] ?? '');
 
-            if (empty($nis) && empty($nisn)) {
-                $duplicates[] = ['line' => $line, 'nis' => $nis, 'nisn' => $nisn, 'nama' => $nama, 'reason' => 'NIS dan NISN kosong'];
+            // nisn is NOT NULL
+            if (empty($nisn)) {
+                $duplicates[] = ['line' => $line, 'nis' => $nis, 'nisn' => $nisn, 'nama' => $nama, 'reason' => 'NISN wajib diisi'];
                 continue;
             }
 
-            // Check duplicate in DB
-            $dupNis = null;
-            $dupNisn = null;
-            if (!empty($nis)) {
-                $dupNis = $model->where('nis', $nis)->where('dlt_at', null)->first();
-            }
-            if (!empty($nisn)) {
-                $dupNisn = $model->where('nisn', $nisn)->where('dlt_at', null)->first();
+            if (empty($nama)) {
+                $duplicates[] = ['line' => $line, 'nis' => $nis, 'nisn' => $nisn, 'nama' => $nama, 'reason' => 'Nama wajib diisi'];
+                continue;
             }
 
+            // Resolve kelas_id from name or ID
+            $kelasId = null;
+            if (!empty($kelasRaw)) {
+                $kelasNormalized = strtolower(str_replace([' ', '-', '_'], '', $kelasRaw));
+                if (isset($kelasMap[$kelasNormalized])) {
+                    $kelasId = $kelasMap[$kelasNormalized];
+                } elseif (is_numeric($kelasRaw) && isset($kelasIdSet[(int)$kelasRaw])) {
+                    $kelasId = (int)$kelasRaw;
+                } else {
+                    $duplicates[] = ['line' => $line, 'nis' => $nis, 'nisn' => $nisn, 'nama' => $nama, 'reason' => "Kelas '$kelasRaw' tidak ditemukan"];
+                    continue;
+                }
+            }
+
+            // Check duplicate in DB
+            $dupNisn = $model->where('nisn', $nisn)->where('dlt_at', null)->first();
+            if ($dupNisn) {
+                $duplicates[] = ['line' => $line, 'nis' => $nis, 'nisn' => $nisn, 'nama' => $nama, 'reason' => "NISN '$nisn' sudah ada (ID: {$dupNisn->id}, Nama: {$dupNisn->nm_lengkap})"];
+                continue;
+            }
+
+            $dupNis = null;
             $reasons = [];
-            if ($dupNis) $reasons[] = "NIS '$nis' sudah ada (ID: {$dupNis->id}, Nama: {$dupNis->nm_lengkap})";
-            if ($dupNisn) $reasons[] = "NISN '$nisn' sudah ada (ID: {$dupNisn->id}, Nama: {$dupNisn->nm_lengkap})";
+            if (!empty($nis)) {
+                $dupNis = $model->where('nis', $nis)->where('dlt_at', null)->first();
+                if ($dupNis) {
+                    $reasons[] = "NIS '$nis' sudah ada (ID: {$dupNis->id}, Nama: {$dupNis->nm_lengkap})";
+                }
+            }
 
             if ($reasons) {
                 $duplicates[] = ['line' => $line, 'nis' => $nis, 'nisn' => $nisn, 'nama' => $nama, 'reason' => implode('; ', $reasons)];
@@ -95,29 +133,34 @@ class Import extends BaseController
             }
 
             // Check duplicate within batch
+            $batchDup = false;
             foreach ($validRows as $vr) {
+                if ($vr['nisn'] === $nisn) {
+                    $duplicates[] = ['line' => $line, 'nis' => $nis, 'nisn' => $nisn, 'nama' => $nama, 'reason' => "NISN '$nisn' duplikat dalam file (baris {$vr['line']})"];
+                    $batchDup = true;
+                    break;
+                }
                 if (!empty($nis) && $vr['nis'] === $nis) {
                     $duplicates[] = ['line' => $line, 'nis' => $nis, 'nisn' => $nisn, 'nama' => $nama, 'reason' => "NIS '$nis' duplikat dalam file (baris {$vr['line']})"];
-                    continue 2;
-                }
-                if (!empty($nisn) && $vr['nisn'] === $nisn) {
-                    $duplicates[] = ['line' => $line, 'nis' => $nis, 'nisn' => $nisn, 'nama' => $nama, 'reason' => "NISN '$nisn' duplikat dalam file (baris {$vr['line']})"];
-                    continue 2;
+                    $batchDup = true;
+                    break;
                 }
             }
+            if ($batchDup) continue;
 
             $validRows[] = [
                 'line'       => $line,
                 'nis'        => $nis,
                 'nisn'       => $nisn,
                 'nama'       => $nama,
-                'kelas'      => $kelas,
+                'kelas_id'   => $kelasId,
                 'kelamin'    => in_array(strtoupper($jk), ['L', 'P', 'LAKI-LAKI', 'PEREMPUAN']) ? (in_array(strtoupper($jk), ['L', 'LAKI-LAKI']) ? 'L' : 'P') : 'L',
                 'alamat'     => $alamat,
                 'no_telp'    => $no_telp,
-                'nama_ayah'  => $nama_ayah,
-                'nama_ibu'   => $nama_ibu,
-                'thn_masuk'  => $thn_masuk,
+                'email'      => $email,
+                'tmp_lahir'  => $tmp_lahir,
+                'tgl_lahir'  => $tgl_lahir,
+                'agama'      => $agama,
             ];
         }
 
@@ -125,7 +168,7 @@ class Import extends BaseController
         if (count($duplicates) > 0) {
             return $this->respond([
                 'status' => 'error',
-                'message' => 'Ditemukan ' . count($duplicates) . ' data duplikat/ganda. Seluruh data ditolak.',
+                'message' => 'Ditemukan ' . count($duplicates) . ' data error/duplikat. Seluruh data ditolak.',
                 'data' => [
                     'total_rows'    => count($dataRows),
                     'valid_rows'    => count($validRows),
@@ -137,31 +180,46 @@ class Import extends BaseController
 
         // Phase 2: Insert all
         $inserted = 0;
+        $failedInserts = [];
         foreach ($validRows as $vr) {
+            $db->transBegin();
             try {
-                $model->insert([
-                    'nis'        => $vr['nis'],
+                $insertResult = $model->insert([
                     'nisn'       => $vr['nisn'],
+                    'nis'        => $vr['nis'] ?: null,
                     'nm_lengkap' => $vr['nama'],
-                    'kelas'      => $vr['kelas'],
+                    'kelas_id'   => $vr['kelas_id'],
                     'kelamin'    => $vr['kelamin'],
-                    'alamat'     => $vr['alamat'],
-                    'no_telp'    => $vr['no_telp'],
-                    'nama_ayah'  => $vr['nama_ayah'],
-                    'nama_ibu'   => $vr['nama_ibu'],
-                    'thn_masuk'  => $vr['thn_masuk'],
+                    'alamat'     => $vr['alamat'] ?: null,
+                    'no_telp'    => $vr['no_telp'] ?: null,
+                    'email'      => $vr['email'] ?: null,
+                    'tmp_lahir'  => $vr['tmp_lahir'] ?: null,
+                    'tgl_lahir'  => $vr['tgl_lahir'] ?: null,
+                    'agama'      => $vr['agama'] ?: null,
                     'status'     => 'aktif',
                 ], false);
+                
+                if (!$insertResult) {
+                    throw new \Exception('Insert gagal: ' . json_encode($model->errors()));
+                }
+                
+                $db->transCommit();
                 $inserted++;
             } catch (\Throwable $e) {
-                log_message('error', 'Import siswa insert failed: ' . $e->getMessage());
+                $db->transRollback();
+                $failedInserts[] = ['line' => $vr['line'], 'nis' => $vr['nis'], 'nisn' => $vr['nisn'], 'nama' => $vr['nama'], 'reason' => 'Error insert: ' . $e->getMessage()];
+                log_message('error', 'Import siswa insert failed (line ' . $vr['line'] . '): ' . $e->getMessage());
             }
         }
 
         return $this->respond([
             'status'  => 'success',
             'message' => "Berhasil import $inserted data siswa",
-            'data'    => ['inserted' => $inserted, 'total' => count($validRows)],
+            'data'    => [
+                'inserted'       => $inserted,
+                'total'          => count($validRows),
+                'failed_inserts' => $failedInserts,
+            ],
         ]);
     }
 
@@ -292,21 +350,32 @@ class Import extends BaseController
                     $counter++;
                 }
 
-                // Create user
-                $db->table('users')->insert([
+                // Create user (column is 'pwd', not 'password')
+                $userInserted = $db->table('users')->insert([
                     'username' => strtolower($username),
-                    'password' => password_hash($username . '123', PASSWORD_DEFAULT),
+                    'pwd'      => password_hash($username . '123', PASSWORD_DEFAULT),
                     'role'     => 'guru',
                     'status'   => 'aktif',
                     'crd_at'   => date('Y-m-d H:i:s'),
                     'upd_at'   => date('Y-m-d H:i:s'),
                 ]);
+                
+                if (!$userInserted) {
+                    throw new \Exception('Insert user gagal');
+                }
+                
                 $userId = $db->insertID();
+                
+                if (!$userId || $userId == 0) {
+                    throw new \Exception('User ID tidak valid setelah insert: ' . $userId);
+                }
 
-                // Insert guru
-                $model->insert([
+                // Insert guru (peg_id is NOT NULL, generate if empty)
+                $pegId = !empty($vr['peg_id']) ? $vr['peg_id'] : 'GURU-' . str_pad($inserted + 1, 4, '0', STR_PAD_LEFT);
+                
+                $insertData = [
                     'user_id'   => $userId,
-                    'peg_id'    => $vr['peg_id'] ?: null,
+                    'peg_id'    => $pegId,
                     'nik'       => $vr['nik'],
                     'nm_lengkap'=> $vr['nama'],
                     'email'     => $vr['email'] ?: null,
@@ -316,7 +385,13 @@ class Import extends BaseController
                     'tmp_lahir' => $vr['tmp_lahir'] ?: null,
                     'tgl_lahir' => $vr['tgl_lahir'] ?: null,
                     'status'    => 'aktif',
-                ], false);
+                ];
+                
+                $result = $model->insert($insertData, false);
+                
+                if (!$result) {
+                    throw new \Exception('Insert guru gagal: ' . json_encode($model->errors()));
+                }
 
                 $db->transCommit();
                 $inserted++;
@@ -358,7 +433,7 @@ class Import extends BaseController
                 case in_array($h, ['thnmasuk', 'tahunmasuk', 'angkatan']): $map['thn_masuk'] = $i; break;
             }
         }
-        return (isset($map['nis']) || isset($map['nisn'])) && isset($map['nm_lengkap']) && isset($map['kelas']) ? $map : null;
+        return isset($map['nisn']) && isset($map['nm_lengkap']) && isset($map['kelas']) ? $map : null;
     }
 
     private function mapHeadersGuru(array $headers)

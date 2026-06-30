@@ -13,7 +13,7 @@ class Siswa extends BaseController
     public function index()
     {
         $model = new SiswaModel();
-        $data  = $model->orderBy('kelas', 'ASC')->orderBy('nm_lengkap', 'ASC')->findAll();
+        $data  = $model->orderBy('kelas_id', 'ASC')->orderBy('nm_lengkap', 'ASC')->findAll();
 
         return $this->respond([
             'status' => 'success',
@@ -84,12 +84,9 @@ class Siswa extends BaseController
         }
 
         $model = new SiswaModel();
-        $model->where('kelas', $kelasAsal)
+        $model->where('kelas_id', $kelasAsal)
               ->where('status', 'aktif')
-              ->set([
-                  'kelas'             => $kelasTujuan,
-                  'thn_pelajaran_id'  => $thnPelajaranId,
-              ])
+              ->set(['kelas_id' => $kelasTujuan])
               ->update();
 
         return $this->respond([
